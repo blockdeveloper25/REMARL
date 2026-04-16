@@ -6,14 +6,11 @@
 ## Quick start
 
 ```bash
-# 1. Clone MARE into the mare/ directory
-git clone https://github.com/tuyoshivinicius/mare-implementation.git mare/
+
 
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Verify MARE still works unchanged
-python -m mare.pipeline --idea "a simple todo app"
 
 # 4. Build the scenario cache (one-time)
 python sim/scenario_gen.py
