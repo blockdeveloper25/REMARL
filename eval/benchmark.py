@@ -50,6 +50,37 @@ def run_eval_episode(env, model=None) -> dict:
         "oracle": oracle_result,
     }
 
+class MAREBaselinePolicy:
+    """
+    Simulates vanilla MARE: always follows the default fixed phase sequence.
+    No RL, no learning. This is the true comparison baseline for REMARL.
+
+    MARE always does: stakeholder→collector(question)→collector(draft)
+                      →modeler(entity)→modeler(relation)→checker→documenter
+    We map each phase to its default action index (0-3).
+    """
+    FIXED_ACTION = {
+        "stakeholder": 0,   # speak_user_stories
+        "collector":   0,   # propose_question (MARE asks questions first)
+        "modeler":     0,   # extract_entity
+        "checker":     0,   # check_completeness
+        "documenter":  2,   # write_final_srs
+    }
+
+    def __init__(self):
+        self._step = 0
+
+    def predict(self, obs, deterministic=True):
+        from sim.re_env import DEFAULT_PHASE_SEQUENCE
+        role = DEFAULT_PHASE_SEQUENCE[
+            self._step % len(DEFAULT_PHASE_SEQUENCE)
+        ][0]
+        action = self.FIXED_ACTION.get(role, 0)
+        self._step += 1
+        return action, None
+
+    def reset(self):
+        self._step = 0
 
 def benchmark(config_path: str, checkpoint_path: str, n_eval: int, domain: str = None):
     with open(config_path) as f:
@@ -60,29 +91,31 @@ def benchmark(config_path: str, checkpoint_path: str, n_eval: int, domain: str =
     from sim.re_env import RESimEnv, AGENT_ACTION_MAP
     from rl.state_encoder import StateEncoder
     from rl.reward import RewardEngine
-    from eval.metrics import aggregate_oracle_results, print_comparison
+    from eval.metrics import aggregate_oracle_results, print_comparison, compare_with_significance
+    from mare.agents.factory import AgentFactory
+    from mare.rl_adapter import MARERLAgent
 
     gen     = ScenarioGenerator(config["env"]["scenario_dir"])
     oracle  = Oracle()
     encoder = StateEncoder(model_name=config["state_encoder"]["model"])
     reward  = RewardEngine()
 
-    class StubAgent:
-        def perform_action(self, action_name, workspace):
-            workspace.set("req_draft",
-                workspace.get("req_draft","") +
-                f"\nThe system shall support {action_name.replace('_',' ')}.")
-            if action_name in ("write_final_srs","approve_and_document"):
-                workspace.set("srs_document", workspace.get("req_draft",""))
-            return {"output": f"executed {action_name}"}
-
-    agents = {r: StubAgent() for r in AGENT_ACTION_MAP}
+    raw_agents = AgentFactory.create_all_agents_from_config(config)
+    rl_agents = {
+        role_name: MARERLAgent(raw_agents[role_name])
+        for role_name in raw_agents
+    }
 
     def make_env():
+        for agent in rl_agents.values():
+            agent.reset()
         return RESimEnv(
-            scenario_gen=gen, oracle=oracle,
-            state_encoder=encoder, reward_engine=reward,
-            agents=agents, agent_role="collector",
+            scenario_gen=gen,
+            oracle=oracle,
+            state_encoder=encoder,
+            reward_engine=reward,
+            agents=rl_agents,
+            agent_role="collector",
             max_steps=config["env"]["max_steps_per_episode"],
         )
 
@@ -109,8 +142,11 @@ def benchmark(config_path: str, checkpoint_path: str, n_eval: int, domain: str =
             remarl_results.append(r_ep["oracle"])
 
         # Baseline run (same scenario, random policy)
+        # NEW — correct:
+        baseline_policy = MAREBaselinePolicy()
         obs, _ = env.reset(options=opt)
-        b_ep = run_eval_episode(env, model=None)
+        baseline_policy.reset()
+        b_ep = run_eval_episode(env, model=baseline_policy)  # ← MARE default sequence
         if b_ep["oracle"]:
             baseline_results.append(b_ep["oracle"])
 
@@ -121,9 +157,13 @@ def benchmark(config_path: str, checkpoint_path: str, n_eval: int, domain: str =
         print("Not enough episodes with oracle results. Check max_steps setting.")
         return
 
+    # NEW — also collect raw rewards for the t-test:
     remarl_agg  = aggregate_oracle_results(remarl_results)
     baseline_agg = aggregate_oracle_results(baseline_results)
     print_comparison(remarl_agg, baseline_agg)
+
+    # Statistical test — needs the raw lists, not aggregated
+    stats_result = compare_with_significance(remarl_results, baseline_results)
 
 
 if __name__ == "__main__":

@@ -15,14 +15,24 @@ llm:
   base_url: "http://localhost:11434"
   model: "llama3.1:8b"          # default fallback model
   temperature: 0.2
-  max_tokens: 2048
+  max_tokens: 512
   # Per-agent model assignments (model must be pulled in Ollama)
   agent_models:
-    stakeholder: "gemma4:latest"  # creative narrative / user stories
+    stakeholder: "llama3.2:3b"  # creative narrative / user stories
     collector:   "qwen2.5:7b"    # structured Q&A / requirements drafting
-    modeler:     "qwen2.5:7b"    # entity & relation extraction
+    modeler:     "llama3.2:3b"    # entity & relation extraction
     checker:     "llama3.1:8b"   # formal QA / completeness analysis
-    documenter:  "gemma4:latest"   # IEEE 830 SRS document generation
+    documenter:  "llama3.1:8b"   # IEEE 830 SRS document generation
+    negotiator:  "llama3.1:8b" 
+  
+  # Per-agent token limits — overrides the default above
+  agent_max_tokens:
+    stakeholder: 384    # user stories: short, punchy
+    collector:   512    # questions + draft: medium
+    modeler:     384    # entity/relation lists: short
+    checker:     512    # quality report: medium
+    documenter:  1024   # SRS document: needs more space
+    negotiator:  640    # resolution reasoning: medium-long
 
 # ── State encoder ──────────────────────────────────────────────
 state_encoder:
@@ -48,14 +58,14 @@ reward:
 # ── Simulation environment ─────────────────────────────────────
 env:
   scenario_dir: "data/scenarios/"
-  max_steps_per_episode: 24
+  max_steps_per_episode: 12   #24
   hide_fraction: 0.25           # fraction of reqs hidden from agents per episode
 
 # ── PPO hyperparameters (one policy per agent role) ───────────
 ppo:
   learning_rate: 3.0e-4
-  n_steps: 512                  # steps collected before each PPO update
-  batch_size: 64
+  n_steps: 128                   # steps collected before each PPO update #512  
+  batch_size: 32                #64
   n_epochs: 10
   gamma: 0.95                   # discount — ~20-step horizon
   gae_lambda: 0.95

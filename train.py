@@ -16,6 +16,9 @@ import sys
 import yaml
 from pathlib import Path
 
+# Ensure log directory exists
+Path("data/logs").mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -54,29 +57,30 @@ def build_env_fn(config: dict, agent_role: str):
         coverage_delta_weight=config["reward"]["coverage_delta_weight"],
     )
 
-    # Stub agents: replace with real MARE agents once MARE is integrated
-    from sim.re_env import MockWorkspace, AGENT_ACTION_MAP
+    # Build real MARE agents once — reuse across all episodes
+    # Each agent connects to Ollama with its configured model
+    from mare.agents.factory import AgentFactory
+    from mare.rl_adapter import MARERLAgent
 
-    class StubAgent:
-        def perform_action(self, action_name, workspace):
-            workspace.set(
-                "req_draft",
-                workspace.get("req_draft", "") +
-                f"\nThe system shall support {action_name.replace('_', ' ')}."
-            )
-            if action_name in ("write_final_srs", "approve_and_document"):
-                workspace.set("srs_document", workspace.get("req_draft", ""))
-            return {"output": f"executed {action_name}", "success": True}
+    raw_agents = AgentFactory.create_all_agents_from_config(config)
 
-    agents = {role: StubAgent() for role in AGENT_ACTION_MAP}
+    # Wrap each real MARE agent in the RL adapter
+    rl_agents = {
+        role_name: MARERLAgent(raw_agents[role_name])
+        for role_name in raw_agents
+    }
 
     def env_fn():
+        # Reset agent conversation history at each new episode
+        for agent in rl_agents.values():
+            agent.reset()
+
         return RESimEnv(
             scenario_gen=gen,
             oracle=oracle,
             state_encoder=encoder,
             reward_engine=reward_engine,
-            agents=agents,
+            agents=rl_agents,
             agent_role=agent_role,
             max_steps=config["env"]["max_steps_per_episode"],
             step_penalty=config["reward"]["step_penalty"],

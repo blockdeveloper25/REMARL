@@ -555,6 +555,84 @@ def stage_checker(agents: dict, session: dict,
 
     return check_results
 
+def stage_negotiator(agents: dict, session: dict,
+                     reward_engine, stage_scores: list) -> str:
+    """Stage 5b — Negotiator resolves conflicts found by Checker."""
+    from mare.agents.base import ActionType
+    _print_header("Stage 5b / 6 — Conflict Negotiation",
+                  "Negotiator Agent (llama3.1:8b)")
+
+    if "negotiator" not in agents:
+        if console:
+            console.print("[dim yellow]Negotiator agent not available — skipping.[/dim yellow]")
+        return session.get("req_draft", "")
+
+    # Only run if checker found conflicts
+    check_results = session.get("check_results", "")
+    conflict_keywords = ["conflict", "contradiction", "inconsistent", "incompatible"]
+    has_conflicts = any(kw in check_results.lower() for kw in conflict_keywords)
+
+    if not has_conflicts:
+        if console:
+            console.print("[dim green]No conflicts detected — skipping negotiation.[/dim green]")
+        return session.get("req_draft", "")
+
+    agent = agents["negotiator"]
+    feedback = ""
+
+    for attempt in range(MAX_FEEDBACK_RETRIES + 1):
+        if console:
+            console.print("[dim]Negotiating conflicts…[/dim]")
+
+        # Step 1: Negotiate conflicts
+        neg_result = agent.execute_action(
+            ActionType.NEGOTIATE_CONFLICT,
+            {
+                "error_report":   check_results,
+                "requirements":   session["req_draft"],
+                "domain":         session.get("domain", "general software system"),
+                "stakeholders":   "",
+                "human_feedback": feedback,
+            },
+        )
+        negotiation_text = neg_result.output_data.get("negotiation_result", "")
+
+        # Step 2: Prioritize
+        pri_result = agent.execute_action(
+            ActionType.PRIORITIZE_REQUIREMENTS,
+            {
+                "requirements":  session["req_draft"],
+                "domain":        session.get("domain", "general software system"),
+                "stakeholders":  "",
+                "human_feedback": "",
+            },
+        )
+        priority_text = pri_result.output_data.get("prioritization", "")
+
+        # Step 3: Write resolved requirements
+        res_result = agent.execute_action(
+            ActionType.WRITE_RESOLUTION,
+            {
+                "requirements":      session["req_draft"],
+                "negotiation_result": negotiation_text,
+                "prioritization":    priority_text,
+                "domain":            session.get("domain", "general software system"),
+                "human_feedback":    feedback,
+            },
+        )
+        resolved = res_result.output_data.get("resolved_requirements", session["req_draft"])
+
+        combined = f"## Conflict Resolutions\n\n{negotiation_text}\n\n---\n\n## Priority Assignments\n\n{priority_text}\n\n---\n\n## Resolved Requirements\n\n{resolved}"
+        _print_agent_output("negotiator", agent.config.model_name, combined)
+        _score_and_display(resolved, session.get("req_draft", ""), reward_engine, stage_scores)
+
+        feedback = _ask_human_feedback("Negotiated Requirements")
+        if not feedback:
+            return resolved
+        if attempt == MAX_FEEDBACK_RETRIES:
+            return resolved
+
+    return resolved
 
 def stage_documenter(agents: dict, session: dict,
                      reward_engine, stage_scores: list) -> str:
@@ -812,6 +890,18 @@ def run_pipeline(config_path: str, resume_path: str = None):
         session["check_results"] = stage_checker(
             agents, session, reward_engine, stage_scores
         )
+        _save_session(session, session_path)
+
+    # ═════════════════════════════════════════════════════════════════════════
+    #  Stage 5b — Conflict Negotiation
+    # ═════════════════════════════════════════════════════════════════════════
+    if "negotiated_draft" not in session:
+        session["negotiated_draft"] = stage_negotiator(
+            agents, session, reward_engine, stage_scores
+        )
+        # Update req_draft with the resolved version
+        if session["negotiated_draft"]:
+            session["req_draft"] = session["negotiated_draft"]
         _save_session(session, session_path)
 
     # ═════════════════════════════════════════════════════════════════════════
