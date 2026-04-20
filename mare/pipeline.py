@@ -29,6 +29,8 @@ DEFAULT_ACTION_SEQUENCE = [
     ("modeler",     "build_use_case"),
     ("checker",     "check_completeness"),
     ("checker",     "check_consistency"),
+    ("negotiator",  "accept_requirement"),    # ← ADD: negotiate conflicts
+    ("negotiator",  "modify_priority"),       # ← ADD: prioritize requirements
     ("documenter",  "write_final_srs"),
 ]
 

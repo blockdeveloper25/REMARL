@@ -29,6 +29,7 @@ class AgentRole(Enum):
     MODELER = "modeler"
     CHECKER = "checker"
     DOCUMENTER = "documenter"
+    NEGOTIATOR  = "negotiator"   # ← ADD THIS
 
 
 class ActionType(Enum):
@@ -42,6 +43,9 @@ class ActionType(Enum):
     CHECK_REQUIREMENT = "check_requirement"
     WRITE_SRS = "write_srs"
     WRITE_CHECK_REPORT = "write_check_report"
+    NEGOTIATE_CONFLICT       = "negotiate_conflict"
+    PRIORITIZE_REQUIREMENTS  = "prioritize_requirements"
+    WRITE_RESOLUTION         = "write_resolution"
 
 
 @dataclass
@@ -291,16 +295,21 @@ class AbstractAgent(ABC, MARELoggerMixin):
             Generated response
         """
         try:
-            # Add the prompt as a human message
-            messages = self._conversation_history + [HumanMessage(content=prompt)]
-            
-            # Generate response using invoke
+            # ── NEW: Hard cap on history to prevent context explosion ──
+            # Keep only system prompt + last 2 exchanges (5 messages max)
+            system_msgs = [m for m in self._conversation_history 
+                        if isinstance(m, SystemMessage)]
+            recent_msgs = [m for m in self._conversation_history 
+                        if not isinstance(m, SystemMessage)][-4:]
+            capped_history = system_msgs + recent_msgs
+            # ──────────────────────────────────────────────────────────
+
+            messages = capped_history + [HumanMessage(content=prompt)]
             response = self._llm.invoke(messages)
-            
-            # Add both prompt and response to conversation history
+
             self.add_message(HumanMessage(content=prompt))
             self.add_message(AIMessage(content=response.content))
-            
+
             return response.content
             
         except Exception as e:
