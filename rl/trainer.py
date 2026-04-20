@@ -97,34 +97,37 @@ class REMARLTrainer:
         logger.info("Trainer components initialised.")
 
     def _make_env_fn(self, role: str):
-        """Returns a zero-arg callable that builds a fresh RESimEnv."""
+        """Returns a zero-arg callable that builds a fresh RESimEnv with real MARE agents."""
+        from mare.agents.factory import AgentFactory
+        from mare.rl_adapter import MARERLAgent
+        from sim.re_env import RESimEnv, AGENT_ACTION_MAP
+
+        config = self.config
         gen, oracle, encoder, reward = (
             self.gen, self.oracle, self.encoder, self.reward
         )
-        config = self.config
 
-        from sim.re_env import RESimEnv, AGENT_ACTION_MAP
+        # Build real MARE agents once — reuse across all episodes
+        # Each agent connects to Ollama with its configured model
+        raw_agents = AgentFactory.create_all_agents_from_config(config)
 
-        class StubAgent:
-            def perform_action(self, action_name, workspace):
-                workspace.set(
-                    "req_draft",
-                    workspace.get("req_draft", "") +
-                    f"\nThe system shall support {action_name.replace('_', ' ')}."
-                )
-                if action_name in ("write_final_srs", "approve_and_document"):
-                    workspace.set("srs_document", workspace.get("req_draft", ""))
-                return {"output": f"executed {action_name}", "success": True}
-
-        agents = {r: StubAgent() for r in AGENT_ACTION_MAP}
+        # Wrap each real MARE agent in the RL adapter
+        rl_agents = {
+            role_name: MARERLAgent(raw_agents[role_name])
+            for role_name in raw_agents
+        }
 
         def env_fn():
+            # Reset agent conversation history at each new episode
+            for agent in rl_agents.values():
+                agent.reset()
+
             return RESimEnv(
                 scenario_gen=gen,
                 oracle=oracle,
                 state_encoder=encoder,
                 reward_engine=reward,
-                agents=agents,
+                agents=rl_agents,
                 agent_role=role,
                 max_steps=config["env"]["max_steps_per_episode"],
                 step_penalty=config["reward"]["step_penalty"],

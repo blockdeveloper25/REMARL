@@ -17,6 +17,7 @@ from mare.agents.checker import CheckerAgent
 from mare.agents.documenter import DocumenterAgent
 from mare.utils.exceptions import ConfigurationError
 from mare.utils.logging import get_logger
+from mare.agents.negotiator import NegotiatorAgent
 
 logger = get_logger(__name__)
 
@@ -27,6 +28,8 @@ _DEFAULT_MODELS: Dict[str, str] = {
     "modeler":     "qwen2.5:7b",
     "checker":     "llama3.1:8b",
     "documenter":  "gemma4:latest",
+    "negotiator":  "llama3.1:8b",
+    
 }
 
 
@@ -44,6 +47,7 @@ class AgentFactory:
         AgentRole.MODELER:     ModelerAgent,
         AgentRole.CHECKER:     CheckerAgent,
         AgentRole.DOCUMENTER:  DocumenterAgent,
+        AgentRole.NEGOTIATOR:  NegotiatorAgent,   # ← ADD THIS
     }
     
     @classmethod
@@ -164,22 +168,25 @@ class AgentFactory:
         llm_cfg = full_config.get("llm", {})
         provider   = llm_cfg.get("provider", "ollama")
         base_url   = llm_cfg.get("base_url", "http://localhost:11434")
+        default_max  = llm_cfg.get("max_tokens", 512)
         temperature = llm_cfg.get("temperature", 0.2)
-        max_tokens  = llm_cfg.get("max_tokens", 2048)
         agent_models = llm_cfg.get("agent_models", {})
+        # NEW: per-agent token limits
+        agent_tokens = llm_cfg.get("agent_max_tokens", {})
 
         agents: Dict[str, AbstractAgent] = {}
 
         for role in AgentRole:
             role_name = role.value
             model = agent_models.get(role_name, _DEFAULT_MODELS.get(role_name, "llama3.1:8b"))
+            max_tok   = agent_tokens.get(role_name, default_max)
 
             config_dict = {
                 "model":       model,
                 "provider":    provider,
                 "base_url":    base_url,
                 "temperature": temperature,
-                "max_tokens":  max_tokens,
+                "max_tokens":  max_tok,
                 "enabled":     True,
             }
 

@@ -76,6 +76,12 @@ AGENT_ACTION_MAP: Dict[str, list] = {
         "write_final_srs",             # 2: produce final SRS document
         "add_traceability_matrix",     # 3: add req-to-test mapping
     ],
+    "negotiator": [
+        "accept_requirement",    # 0: resolve conflict by accepting both
+        "reject_requirement",    # 1: resolve by removing one requirement
+        "modify_priority",       # 2: re-prioritize to resolve tension
+        "defer_to_next_sprint",  # 3: defer lower-priority conflicting req
+    ],
 }
 
 # MARE's natural action sequence (REMARL can deviate from this)
@@ -87,6 +93,8 @@ DEFAULT_PHASE_SEQUENCE = [
     ("modeler",     "extract_relation"),
     ("checker",     "check_completeness"),
     ("checker",     "check_consistency"),
+    ("negotiator",  "accept_requirement"),    # ← ADD
+    ("negotiator",  "modify_priority"),       # ← ADD
     ("documenter",  "write_final_srs"),
 ]
 
@@ -174,7 +182,13 @@ class RESimEnv(gym.Env):
         loads the scenario's rough idea into the workspace.
         """
         super().reset(seed=seed)
-
+        # ── NEW: Reset all agent conversation histories ───────────────
+        # This prevents conversation history from accumulating across
+        # episodes, which causes exponentially growing context and 
+        # 70+ second Ollama calls by episode 13.
+        for agent in self.agents.values():
+            if hasattr(agent, "reset"):
+                agent.reset()
         # Sample new scenario
         domain = options.get("domain") if options else None
         difficulty = options.get("difficulty") if options else None
